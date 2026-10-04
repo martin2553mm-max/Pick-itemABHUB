@@ -1,0 +1,293 @@
+-- DEX HUB — Item Pickup Script
+-- ดึงระบบ pickup_dropped_item จากสคริปต์ต้นฉบับและรวม UI ไว้ในไฟล์นี้
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local pickupEnabled = false
+local pickupRadius = 20
+local pickupInterval = 0.08
+local lastScan = 0
+local itemCooldown = {}
+local networkState
+
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local getRemote = remotes:WaitForChild("Get")
+
+-- เกมนี้ใช้ตารางภายในที่มีตัวนับ event/func ก่อนเรียก RemoteFunction
+local function findNetworkState()
+    if typeof(getgc) ~= "function" then
+        return nil
+    end
+
+    local success, objects = pcall(getgc, true)
+    if not success then
+        return nil
+    end
+
+    for _, object in ipairs(objects) do
+        if typeof(object) == "table"
+            and rawget(object, "event") ~= nil
+            and rawget(object, "func") ~= nil then
+            return object
+        end
+    end
+
+    return nil
+end
+
+local function getRootPart()
+    local character = player.Character
+    if not character then
+        return nil
+    end
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+local function requestPickup(item)
+    if not networkState or typeof(networkState.func) ~= "number" then
+        networkState = findNetworkState()
+    end
+    if not networkState then
+        return false
+    end
+
+    networkState.func = networkState.func + 1
+    local success = pcall(function()
+        getRemote:InvokeServer(networkState.func, "pickup_dropped_item", item)
+    end)
+    return success
+end
+
+local function scanDroppedItems()
+    if not pickupEnabled then
+        return
+    end
+
+    local rootPart = getRootPart()
+    local droppedItems = workspace:FindFirstChild("DroppedItems")
+    if not rootPart or not droppedItems then
+        return
+    end
+
+    local now = os.clock()
+    for _, item in ipairs(droppedItems:GetChildren()) do
+        if item:IsA("Model") then
+            local itemPart = item:FindFirstChildWhichIsA("BasePart")
+            if itemPart and (rootPart.Position - itemPart.Position).Magnitude <= pickupRadius then
+                if now - (itemCooldown[item] or 0) >= 0.2 then
+                    itemCooldown[item] = now
+                    task.spawn(requestPickup, item)
+                end
+            end
+        end
+    end
+
+    for item in pairs(itemCooldown) do
+        if item.Parent == nil then
+            itemCooldown[item] = nil
+        end
+    end
+end
+
+-- UI ขนาดเล็กในสคริปต์เดียว
+local guiParent = game:GetService("CoreGui")
+if typeof(gethui) == "function" then
+    local success, hiddenGui = pcall(gethui)
+    if success and hiddenGui then
+        guiParent = hiddenGui
+    end
+end
+
+local oldGui = guiParent:FindFirstChild("DexHubItemPickupUI")
+if oldGui then
+    oldGui:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "DexHubItemPickupUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = guiParent
+
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.Size = UDim2.fromOffset(230, 94)
+panel.Position = UDim2.new(0.5, -115, 0.18, 0)
+panel.BackgroundColor3 = Color3.fromRGB(17, 18, 22)
+panel.BorderSizePixel = 0
+panel.Active = true
+panel.Parent = screenGui
+
+local panelCorner = Instance.new("UICorner")
+panelCorner.CornerRadius = UDim.new(0, 8)
+panelCorner.Parent = panel
+
+local panelStroke = Instance.new("UIStroke")
+panelStroke.Color = Color3.fromRGB(54, 57, 66)
+panelStroke.Thickness = 1
+panelStroke.Parent = panel
+
+local accent = Instance.new("Frame")
+accent.Size = UDim2.new(0, 3, 1, 0)
+accent.BackgroundColor3 = Color3.fromRGB(232, 67, 67)
+accent.BorderSizePixel = 0
+accent.Parent = panel
+
+local accentCorner = Instance.new("UICorner")
+accentCorner.CornerRadius = UDim.new(0, 8)
+accentCorner.Parent = accent
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -58, 0, 34)
+title.Position = UDim2.fromOffset(16, 4)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.Text = "DEX HUB"
+title.TextColor3 = Color3.fromRGB(242, 243, 245)
+title.TextSize = 13
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = panel
+
+local closeButton = Instance.new("TextButton")
+closeButton.Name = "Close"
+closeButton.Size = UDim2.fromOffset(28, 28)
+closeButton.Position = UDim2.new(1, -34, 0, 6)
+closeButton.BackgroundTransparency = 1
+closeButton.Font = Enum.Font.GothamBold
+closeButton.Text = "×"
+closeButton.TextColor3 = Color3.fromRGB(145, 148, 158)
+closeButton.TextSize = 20
+closeButton.AutoButtonColor = false
+closeButton.Parent = panel
+
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -24, 0, 1)
+divider.Position = UDim2.fromOffset(12, 38)
+divider.BackgroundColor3 = Color3.fromRGB(42, 44, 51)
+divider.BorderSizePixel = 0
+divider.Parent = panel
+
+local pickupLabel = Instance.new("TextLabel")
+pickupLabel.Size = UDim2.new(1, -92, 0, 42)
+pickupLabel.Position = UDim2.fromOffset(16, 45)
+pickupLabel.BackgroundTransparency = 1
+pickupLabel.Font = Enum.Font.GothamMedium
+pickupLabel.Text = "Auto Pickup"
+pickupLabel.TextColor3 = Color3.fromRGB(218, 220, 225)
+pickupLabel.TextSize = 13
+pickupLabel.TextXAlignment = Enum.TextXAlignment.Left
+pickupLabel.Parent = panel
+
+local toggle = Instance.new("TextButton")
+toggle.Name = "Toggle"
+toggle.Size = UDim2.fromOffset(52, 26)
+toggle.Position = UDim2.new(1, -68, 0, 53)
+toggle.BackgroundColor3 = Color3.fromRGB(54, 57, 66)
+toggle.BorderSizePixel = 0
+toggle.Text = ""
+toggle.AutoButtonColor = false
+toggle.Parent = panel
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(1, 0)
+toggleCorner.Parent = toggle
+
+local knob = Instance.new("Frame")
+knob.Size = UDim2.fromOffset(20, 20)
+knob.Position = UDim2.fromOffset(3, 3)
+knob.BackgroundColor3 = Color3.fromRGB(205, 208, 214)
+knob.BorderSizePixel = 0
+knob.Parent = toggle
+
+local knobCorner = Instance.new("UICorner")
+knobCorner.CornerRadius = UDim.new(1, 0)
+knobCorner.Parent = knob
+
+local function refreshToggle()
+    toggle.BackgroundColor3 = pickupEnabled
+        and Color3.fromRGB(201, 55, 55)
+        or Color3.fromRGB(54, 57, 66)
+    knob.BackgroundColor3 = pickupEnabled
+        and Color3.fromRGB(255, 255, 255)
+        or Color3.fromRGB(205, 208, 214)
+    knob:TweenPosition(
+        pickupEnabled and UDim2.fromOffset(29, 3) or UDim2.fromOffset(3, 3),
+        Enum.EasingDirection.Out,
+        Enum.EasingStyle.Quad,
+        0.14,
+        true
+    )
+end
+
+toggle.MouseButton1Click:Connect(function()
+    pickupEnabled = not pickupEnabled
+    refreshToggle()
+end)
+
+closeButton.MouseEnter:Connect(function()
+    closeButton.TextColor3 = Color3.fromRGB(232, 67, 67)
+end)
+
+closeButton.MouseLeave:Connect(function()
+    closeButton.TextColor3 = Color3.fromRGB(145, 148, 158)
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    pickupEnabled = false
+    screenGui:Destroy()
+end)
+
+-- ลากหน้าต่างได้ทั้งเมาส์และจอสัมผัส
+local dragging = false
+local dragStart
+local startPosition
+local dragInput
+
+panel.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPosition = panel.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+panel.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput and dragStart and startPosition then
+        local delta = input.Position - dragStart
+        panel.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+networkState = findNetworkState()
+refreshToggle()
+
+RunService.Heartbeat:Connect(function()
+    local now = os.clock()
+    if now - lastScan >= pickupInterval then
+        lastScan = now
+        scanDroppedItems()
+    end
+end)
